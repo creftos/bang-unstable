@@ -18,7 +18,9 @@ import copy
 import functools
 import json
 import multiprocessing
+
 import os.path
+
 
 # work around circular import in ansible as discussed on ansible-devel:
 #
@@ -32,15 +34,6 @@ from .deployers import get_stage_deployers
 from .inventory import BangsibleInventory
 from .util import log, SharedNamespace, SharedMap
 from . import BangError, resources as R, attributes as A
-
-
-def require_inventory(f):
-    @functools.wraps(f)
-    def wrapper(self, *args, **kwargs):
-        if not self.have_inventory:
-            self.gather_inventory()
-        return f(self, *args, **kwargs)
-    return wrapper
 
 
 class Stack(object):
@@ -231,7 +224,11 @@ class Stack(object):
         self.have_inventory = True
 
     @require_inventory
-    def configure(self):
+    def configure(self,
+                  playbook_callbacks_class=None,
+                  playbook_runner_callbacks_class=None,
+                  sqs_response_queue=None,
+                  request_message=None):
         """
         Executes the ansible playbooks that configure the servers in the stack.
 
@@ -280,13 +277,26 @@ class Stack(object):
 
             # gratuitously stolen from main() in ``ansible-playbook``
             stats = callbacks.AggregateStats()
-            playbook_cb = callbacks.PlaybookCallbacks(
-                    verbose=ansible_verbosity
-                    )
-            runner_cb = callbacks.PlaybookRunnerCallbacks(
-                    stats,
-                    verbose=ansible_verbosity
-                    )
+
+            if playbook_runner_callbacks_class is None:
+                runner_cb = callbacks.PlaybookRunnerCallbacks(
+                        stats,
+                        verbose=ansible_verbosity
+                        )
+            else:
+                runner_cb = playbook_runner_callbacks_class(stats,
+                                                            ansible_verbosity,
+                                                            sqs_response_queue,
+                                                            request_message)
+
+            if playbook_callbacks_class is None:
+                playbook_cb = callbacks.PlaybookCallbacks(
+                        verbose=ansible_verbosity
+                        )
+            else:
+                playbook_cb = playbook_callbacks_class(ansible_verbosity,
+                                                       sqs_response_queue,
+                                                       request_message)
 
             extra_kwargs = {
                     'playbook': playbook_path,
@@ -330,6 +340,7 @@ class Stack(object):
 
             if failed:
                 raise BangError("Server configuration failed!")
+
 
     def gather_inventory(self):
         """
