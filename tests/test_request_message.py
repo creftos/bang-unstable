@@ -22,9 +22,7 @@ from boto.sqs.message import Message
 # from yaml import ParserError
 from bang.sqslistener.request_message import RequestMessage
 from bang.sqslistener.request_message import RequestMessageException
-from bang.sqslistener.request_message import MissingDataRequestMessageException
 from bang.sqslistener.request_message import EmptyBodyRequestMessageException
-from bang.sqslistener.request_message import NoneMessageRequestMessageException
 from bang.sqslistener.request_message import MissingJobNameRequestMessageException
 
 
@@ -60,7 +58,7 @@ class TestRequestMessage(unittest.TestCase):
 
         bad_message = Message(body=message_body_bad)  # Bad message to test exception throwing with
 
-        with self.assertRaises(RequestMessageException):
+        with self.assertRaises(TypeError):
             request_message = RequestMessage(Message(body=message_body_bad))
 
     def test_parse_yaml_with_params_missing_request_id(self):
@@ -75,7 +73,7 @@ class TestRequestMessage(unittest.TestCase):
 
         bad_message = Message(body=message_body_bad)  # Bad message to test exception throwing with
 
-        with self.assertRaises(RequestMessageException):
+        with self.assertRaises(KeyError):
             request_message = RequestMessage(Message(body=message_body_bad))
 
     def test_empty_message_body(self):
@@ -101,7 +99,8 @@ class TestRequestMessage(unittest.TestCase):
 
     def test_none_message(self):
         none_body_message = None
-        with self.assertRaises(NoneMessageRequestMessageException):
+
+        with self.assertRaises(AttributeError):
             request_message = RequestMessage(none_body_message)
 
     def test_missing_job_name_yaml_key(self):
@@ -112,8 +111,8 @@ class TestRequestMessage(unittest.TestCase):
                                  "    - two\n"
                                  "    - three\n")
         job_name_missing_message = Message(body=job_name_missing_body)
-        with self.assertRaises(RequestMessageException): # TODO Should be MissingJobNameRequestMessageException
-            # TODO: Exception is actually being raised at missing request Id because it thinks parameters is the key name.
+
+        with self.assertRaises(TypeError):
             request_message = RequestMessage(job_name_missing_message)
 
 
@@ -121,6 +120,7 @@ class TestRequestMessage(unittest.TestCase):
         missing_content_body = ("---\n"
                                  "test_job_1:\n")
         missing_content_message = Message(body=missing_content_body)
-        with self.assertRaises(MissingDataRequestMessageException):
+
+        with self.assertRaises(TypeError):
             request_message = RequestMessage(missing_content_message)
 

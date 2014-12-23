@@ -42,21 +42,19 @@ class TestSQSJobs(unittest.TestCase):
         self.assertEquals(new_job.parameters[1], "param2")
 
     def test_generate_job_missing(self):
-        jobs_yaml = yaml.load(
-        ( "---\n"
-          "test_job_name:\n"
-          "  bang-stacks:\n"
-          "  - /path/to/first.yml\n"
-          "  - /path/to/second.yml\n"))
-
+        jobs_yaml = yaml.load(("---\n"
+                               "test_job_name:\n"
+                               "  bang-stacks:\n"
+                               "  - /path/to/first.yml\n"
+                               "  - /path/to/second.yml\n"))
         job_set = SQSJobs()
         job_set.load_jobs_from_yaml_object(jobs_yaml)
 
-        with self.assertRaises(SQSJobError):
+        with self.assertRaises(AttributeError):
             job_set.generate_job("test_job_name_missing", ("param1", "param2"))
 
     def test_load_jobs_from_file_missing_file(self):
         job_set = SQSJobs()
 
-        with self.assertRaises(SQSJobsError):
+        with self.assertRaises(IOError):
             job_set.load_jobs_from_file('this/file/is/missing')

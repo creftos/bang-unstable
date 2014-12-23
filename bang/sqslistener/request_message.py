@@ -25,8 +25,10 @@ logger = logging.getLogger("SQSListener")
 class RequestMessageException(Exception):
     pass
 
+
 class EmptyBodyRequestMessageException(RequestMessageException):
     pass
+
 
 class MissingJobNameRequestMessageException(RequestMessageException):
     pass
@@ -54,8 +56,8 @@ class RequestMessage:
 
         self.request_id = yaml_message_body[self.job_name]['request_id']
 
-        if 'parameters' in yaml_message_body[self.job_name]:
-            self.job_parameters = yaml_message_body[self.job_name]["parameters"]
+        if 'parameters' in yaml_message_body.get(self.job_name):
+            self.job_parameters = yaml_message_body.get(self.job_name).get("parameters")
         else:
             self.job_parameters = None
 

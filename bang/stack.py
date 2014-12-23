@@ -35,6 +35,13 @@ from .inventory import BangsibleInventory
 from .util import log, SharedNamespace, SharedMap
 from . import BangError, resources as R, attributes as A
 
+def require_inventory(f):
+    @functools.wraps(f)
+    def wrapper(self, *args, **kwargs):
+        if not self.have_inventory:
+            self.gather_inventory()
+        return f(self, *args, **kwargs)
+    return wrapper
 
 class Stack(object):
     """

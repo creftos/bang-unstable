@@ -17,7 +17,6 @@
 
 import unittest
 from bang.sqslistener.sqslistener import SQSListener
-from bang.sqslistener.sqslistener import SQSListenerException
 from bang.sqslistener.sqslistener import MissingQueueException
 from bang.sqslistener import response_states
 import boto
@@ -64,7 +63,7 @@ class TestSQSListener(unittest.TestCase):
 
     def post_response_test(self):
         test_message_body = "Message Body Test"
-        self.sqslistener._post_response(test_message_body)
+        self.sqslistener.post_response(test_message_body)
 
         try:
             response_message = self.sqslistener.response_queue.get_messages()[0]
@@ -75,11 +74,11 @@ class TestSQSListener(unittest.TestCase):
 
     @patch('boto.sqs.queue.Queue.get_messages')
     def poll_queue_test(self, mock_get_messages):
-        self.sqslistener._poll_queue()
+        self.sqslistener.poll_queue()
         assert mock_get_messages.called
 
     def load_sqs_listener_config_test(self):
-        test_yaml = self.sqslistener._load_sqs_listener_config('tests/resources/sqslistener/.sqslistener')
+        test_yaml = self.sqslistener.load_sqs_listener_config('tests/resources/sqslistener/.sqslistener')
 
         assert test_yaml['aws_region'] == 'us-east-1'
         assert test_yaml['job_queue_name'] == 'bang-queue'
@@ -94,10 +93,9 @@ class TestSQSListener(unittest.TestCase):
         message = Message(body=("test_job_1:\n"
                                 "  request_id: qwertyasdfjkl;"))
 
-        self.sqslistener._process_message(message)
+        self.sqslistener.process_message(message)
 
         assert mock_start_job_process.called
-        assert mock_delete_message.called
 
     @patch('bang.sqslistener.sqslistener.start_job_process', return_value=mocked_failure_response_body)
     @patch('boto.sqs.queue.Queue.delete_message')
@@ -105,33 +103,33 @@ class TestSQSListener(unittest.TestCase):
         message = Message(body=("test_job_not_there:\n"
                                 "  request_id: qwertyasdfjkl;"))
 
-        self.sqslistener._process_message(message)
+        self.sqslistener.process_message(message)
 
         # Note: 'A started' message does not get put on the queue if the job is missing.
         for msg in self.sqslistener.response_queue.get_messages():
             msg_yaml = yaml.load(msg.get_body())
             assert msg_yaml['result'] == response_states.failure
 
-    def load_sqs_listener_config_test_none_path(self):
-        with patch.dict('os.environ', {'HOME': 'tests/resources/sqslistener/fake-home'}):
-            test_yaml = self.sqslistener._load_sqs_listener_config(listener_config_path=None)
-            assert test_yaml['aws_region'] == 'us-east-1-fake-home'
-            assert test_yaml['job_queue_name'] == 'bang-queue-fake-home'
-            assert test_yaml['jobs_config_path'] == 'tests/resources/sqslistener/jobs-fake-home.yml'
-            assert test_yaml['logging_config_path'] == 'tests/resources/sqslistener/logging-conf-fake-home.yml'
-            assert test_yaml['polling_interval'] == 4
-            assert test_yaml['response_queue_name'] == 'bang-response-fake-home'
+        def load_sqs_listener_config_test_none_path(self):
+            with patch.dict('os.environ', {'HOME': 'tests/resources/sqslistener/fake-home'}):
+                test_yaml = self.sqslistener.load_sqs_listener_config()
+                assert test_yaml['aws_region'] == 'us-east-1-fake-home'
+                assert test_yaml['job_queue_name'] == 'bang-queue-fake-home'
+                assert test_yaml['jobs_config_path'] == 'tests/resources/sqslistener/jobs-fake-home.yml'
+                assert test_yaml['logging_config_path'] == 'tests/resources/sqslistener/logging-conf-fake-home.yml'
+                assert test_yaml['polling_interval'] == 4
+                assert test_yaml['response_queue_name'] == 'bang-response-fake-home'
 
     def load_sqs_listener_config_test_missing_file(self):
-        with self.assertRaises(SQSListenerException):
-            self.sqslistener._load_sqs_listener_config(listener_config_path='this/path/doesnt/exist')
+        with self.assertRaises(IOError):
+            self.sqslistener.load_sqs_listener_config(listener_config_path='this/path/doesnt/exist')
 
     def setup_logging_test(self):
-        logger = self.sqslistener._setup_logging('tests/resources/sqslistener/logging-conf.yml')
+        logger = self.sqslistener.setup_logging('tests/resources/sqslistener/logging-conf.yml')
         # TODO finish
 
     def setup_logging_missing_test(self):
-        logger = self.sqslistener._setup_logging('this/file/does/not/exist/logging-conf.yml')
+        logger = self.sqslistener.setup_logging('this/file/does/not/exist/logging-conf.yml')
         # TODO finish
 
     @patch('bang.sqslistener.sqslistener.SQSListener.process_message')
