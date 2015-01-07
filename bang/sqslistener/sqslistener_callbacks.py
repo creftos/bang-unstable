@@ -19,19 +19,25 @@
 
 # Grabbed directly out of ansible's callbacks.py and modified.
 
-from ansible.callbacks import DefaultRunnerCallbacks, PlaybookCallbacks, PlaybookRunnerCallbacks
+from ansible.callbacks import PlaybookCallbacks, PlaybookRunnerCallbacks
 from ansible import utils
-# from ansible.callbacks import #call_callback_module
 from ansible.callbacks import banner
 import logging
 from response_message import ResponseMessage
 from boto.sqs.message import Message
 import response_states
+import multiprocessing
+import fnmatch
+import ansible.constants as constants
 
 logger = logging.getLogger("SQSListener")
 
-def display(msg, response_queue, request_message):
+
+def display(request_logger, msg, response_queue, request_message):
     logger.info(msg)
+
+    if request_logger:
+        request_logger.info(msg)
 
     if response_queue is not None:
         progress_message = ResponseMessage(job_name=request_message.job_name,
@@ -44,7 +50,8 @@ def display(msg, response_queue, request_message):
         response_queue.write(message)
 
 class SQSListenerPlaybookRunnerCallbacks(PlaybookRunnerCallbacks):
-    def __init__(self, stats, verbose=None, sqs_response_queue=None, request_message=None):
+
+    def __init__(self, stats, sqs_response_queue, request_message, request_logger_name=None, verbose=None):
 
         if verbose is None:
             verbose = utils.VERBOSITY
@@ -55,6 +62,15 @@ class SQSListenerPlaybookRunnerCallbacks(PlaybookRunnerCallbacks):
 
         self.sqs_response_queue = sqs_response_queue
         self.sqs_request_message = request_message
+
+        if request_logger_name:
+            _mlog = multiprocessing.get_logger()
+            self.request_logger = _mlog.manager.getLogger('.'.join((_mlog.name, request_logger_name)))
+        else:
+            self.request_logger = None
+
+    def display(self, msg):
+        display(self.request_logger, msg, self.sqs_response_queue, self.sqs_request_message)
 
     def on_unreachable(self, host, results):
         delegate_to = self.runner.module_vars.get('delegate_to')
@@ -68,7 +84,7 @@ class SQSListenerPlaybookRunnerCallbacks(PlaybookRunnerCallbacks):
             msg = "fatal: [%s] => (item=%s) => %s" % (host, item, results)
         else:
             msg = "fatal: [%s] => %s" % (host, results)
-        display(msg, self.sqs_response_queue, self.sqs_request_message)
+        self.display(msg)
         super(PlaybookRunnerCallbacks, self).on_unreachable(host, results)
 
     def on_failed(self, host, results, ignore_errors=False):
@@ -92,18 +108,18 @@ class SQSListenerPlaybookRunnerCallbacks(PlaybookRunnerCallbacks):
             msg = "failed: [%s] => (item=%s) => %s" % (host, item, utils.jsonify(results2))
         else:
             msg = "failed: [%s] => %s" % (host, utils.jsonify(results2))
-        display(msg, self.sqs_response_queue, self.sqs_request_message)
+        self.display(msg)
 
         if stderr:
-            display("stderr: %s" % stderr, self.sqs_response_queue, self.sqs_request_message)
+            self.display("stderr: %s" % stderr)
         if stdout:
-            display("stdout: %s" % stdout, self.sqs_response_queue, self.sqs_request_message)
+            self.display("stdout: %s" % stdout)
         if returned_msg:
-            display("msg: %s" % returned_msg, self.sqs_response_queue, self.sqs_request_message)
+            self.display("msg: %s" % returned_msg)
         if not parsed and module_msg:
-            display("invalid output was: %s" % module_msg, self.sqs_response_queue, self.sqs_request_message)
+            self.display("invalid output was: %s" % module_msg)
         if ignore_errors:
-            display("...ignoring", self.sqs_response_queue, self.sqs_request_message)
+            self.display("...ignoring")
         super(PlaybookRunnerCallbacks, self).on_failed(host, results, ignore_errors=ignore_errors)
 
     def on_ok(self, host, host_result):
@@ -140,9 +156,9 @@ class SQSListenerPlaybookRunnerCallbacks(PlaybookRunnerCallbacks):
 
         if msg != '':
             if not changed:
-                display(msg, self.sqs_response_queue, self.sqs_request_message)
+                self.display(msg)
             else:
-                display(msg, self.sqs_response_queue, self.sqs_request_message)
+                self.display(msg)
         super(PlaybookRunnerCallbacks, self).on_ok(host, host_result)
 
     def on_skipped(self, host, item=None):
@@ -150,17 +166,17 @@ class SQSListenerPlaybookRunnerCallbacks(PlaybookRunnerCallbacks):
         if delegate_to:
             host = '%s -> %s' % (host, delegate_to)
 
-        if constants.display_SKIPPED_HOSTS:
+        if constants.DISPLAY_SKIPPED_HOSTS:
             msg = ''
             if item:
                 msg = "skipping: [%s] => (item=%s)" % (host, item)
             else:
                 msg = "skipping: [%s]" % host
-            display(msg, self.sqs_response_queue, self.sqs_request_message)
+            self.display(msg)
             super(PlaybookRunnerCallbacks, self).on_skipped(host, item)
 
     def on_no_hosts(self):
-        display("FATAL: no hosts matched or all hosts have already failed -- aborting\n", self.sqs_response_queue, self.sqs_request_message)
+        self.display("FATAL: no hosts matched or all hosts have already failed -- aborting\n")
         super(PlaybookRunnerCallbacks, self).on_no_hosts()
 
     def on_async_poll(self, host, res, jid, clock):
@@ -169,27 +185,27 @@ class SQSListenerPlaybookRunnerCallbacks(PlaybookRunnerCallbacks):
         if self._async_notified[jid] > clock:
             self._async_notified[jid] = clock
             msg = "<job %s> polling, %ss remaining"%(jid, clock)
-            display(msg, self.sqs_response_queue, self.sqs_request_message)
+            self.display(msg)
         super(PlaybookRunnerCallbacks, self).on_async_poll(host,res,jid,clock)
 
     def on_async_ok(self, host, res, jid):
         msg = "<job %s> finished on %s"%(jid, host)
-        display(msg, self.sqs_response_queue, self.sqs_request_message)
+        self.display(msg)
         super(PlaybookRunnerCallbacks, self).on_async_ok(host, res, jid)
 
     def on_async_failed(self, host, res, jid):
         msg = "<job %s> FAILED on %s" % (jid, host)
-        display(msg, self.sqs_response_queue, self.sqs_request_message)
+        self.display(msg)
         super(PlaybookRunnerCallbacks, self).on_async_failed(host,res,jid)
 
     def on_file_diff(self, host, diff):
-        display(utils.get_diff(diff), self.sqs_response_queue, self.sqs_request_message)
+        self.display(utils.get_diff(diff))
         super(PlaybookRunnerCallbacks, self).on_file_diff(host, diff)
 
 
 class SQSListenerPlaybookCallbacks(PlaybookCallbacks):
-    def __init__(self, verbose=False, sqs_response_queue=None, request_message=None):
 
+    def __init__(self, sqs_response_queue, request_message, request_logger_name=None, verbose=False):
         if verbose is None:
             verbose = utils.VERBOSITY
 
@@ -198,6 +214,15 @@ class SQSListenerPlaybookCallbacks(PlaybookCallbacks):
 
         self.sqs_response_queue = sqs_response_queue
         self.sqs_request_message = request_message
+
+        if request_logger_name:
+            _mlog = multiprocessing.get_logger()
+            self.request_logger = _mlog.manager.getLogger('.'.join((_mlog.name, request_logger_name)))
+        else:
+            self.request_logger = None
+
+    def display(self, msg):
+        display(self.request_logger, msg, self.sqs_response_queue, self.sqs_request_message)
 
     def on_start(self):
         pass
@@ -208,11 +233,11 @@ class SQSListenerPlaybookCallbacks(PlaybookCallbacks):
         #call_callback_module('playbook_on_notify', host, handler)
 
     def on_no_hosts_matched(self):
-        display("skipping: no hosts matched", self.sqs_response_queue, self.sqs_request_message)
+        self.display("skipping: no hosts matched")
         #call_callback_module('playbook_on_no_hosts_matched')
 
     def on_no_hosts_remaining(self):
-        display("\nFATAL: all hosts have already failed -- aborting", self.sqs_response_queue, self.sqs_request_message)
+        self.display("\nFATAL: all hosts have already failed -- aborting")
         #call_callback_module('playbook_on_no_hosts_remaining')
 
     def on_task_start(self, name, is_conditional):
@@ -237,16 +262,16 @@ class SQSListenerPlaybookCallbacks(PlaybookCallbacks):
             resp = raw_input(msg)
             if resp.lower() in ['y','yes']:
                 self.skip_task = False
-                display(banner(msg), self.sqs_response_queue, self.sqs_request_message)
+                self.display(banner(msg))
             elif resp.lower() in ['c', 'continue']:
                 self.skip_task = False
                 self.step = False
-                display(banner(msg), self.sqs_response_queue, self.sqs_request_message)
+                self.display(banner(msg))
             else:
                 self.skip_task = True
         else:
             self.skip_task = False
-            display(banner(msg), self.sqs_response_queue, self.sqs_request_message)
+            self.display(banner(msg))
 
         #call_callback_module('playbook_on_task_start', name, is_conditional)
 
@@ -271,7 +296,7 @@ class SQSListenerPlaybookCallbacks(PlaybookCallbacks):
                 second = prompt("confirm " + msg, private)
                 if result == second:
                     break
-                display("***** VALUES ENTERED DO NOT MATCH ****", self.sqs_response_queue, self.sqs_request_message)
+                self.display("***** VALUES ENTERED DO NOT MATCH ****")
         else:
             result = prompt(msg, private)
 
@@ -289,21 +314,21 @@ class SQSListenerPlaybookCallbacks(PlaybookCallbacks):
         return result
 
     def on_setup(self):
-        display(banner("GATHERING FACTS"), self.sqs_response_queue, self.sqs_request_message)
+        self.display(banner("GATHERING FACTS"))
         #call_callback_module('playbook_on_setup')
 
     def on_import_for_host(self, host, imported_file):
         msg = "%s: importing %s" % (host, imported_file)
-        display(msg, self.sqs_response_queue, self.sqs_request_message)
+        self.display(msg)
         #call_callback_module('playbook_on_import_for_host', host, imported_file)
 
     def on_not_import_for_host(self, host, missing_file):
         msg = "%s: not importing file: %s" % (host, missing_file)
-        display(msg, self.sqs_response_queue, self.sqs_request_message)
+        self.display(msg)
         #call_callback_module('playbook_on_not_import_for_host', host, missing_file)
 
     def on_play_start(self, name):
-        display(banner("PLAY [%s]" % name), self.sqs_response_queue, self.sqs_request_message)
+        self.display(banner("PLAY [%s]" % name))
         #call_callback_module('playbook_on_play_start', name)
 
     def on_stats(self, stats):

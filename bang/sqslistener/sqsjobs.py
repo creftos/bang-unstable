@@ -30,7 +30,7 @@ class SQSJobError(Exception):
 class SQSJobsError(Exception):
     pass
 
-class SQSJobs():
+class SQSJobs(object):
     def __init__(self):
         self.jobs_yaml = None
 
@@ -50,7 +50,7 @@ class SQSJobs():
             logger.exception("YAML missing key in jobs config: %s" % str(e))
             raise SQSJobError("Missing job from jobs yaml: %s " % e)
 
-class SQSJob():
+class SQSJob(object):
     # A single job.
     def __init__(self, name, bang_stacks, parameters=None):
         self.name = name

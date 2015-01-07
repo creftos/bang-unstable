@@ -30,14 +30,13 @@ import logging
 import logging.config
 import os
 import response_states
-import sys
 import time
 import yaml
+import s3logging
 
 DEFAULT_POOL_PROCESSES = 5
 DEFAULT_CONFIG_LEVEL = logging.INFO
 DEFAULT_LOGGING_FORMAT = '%(asctime)s - %(levelname)s - %(message)s'
-
 
 class SQSListenerException(Exception):
     pass
@@ -47,7 +46,7 @@ class MissingQueueException(Exception):
     pass
 
 
-class SQSListener:
+class SQSListener(object):
     """The SQS Listener is a tool for polling Amazon's SQS service for bang-stacks to be run."""
 
     def __init__(self,
@@ -57,7 +56,8 @@ class SQSListener:
                  aws_region='us-east-1',
                  queue_name='bang-queue',
                  response_queue_name='bang-response',
-                 polling_interval=2):  # in seconds
+                 polling_interval=2,  # in seconds
+                 s3_logs_bucket='bang-logs'):
 
         """SQSListener Constructor
         :param listener_config_path:    The primary config file path for the SQSListener which contains information
@@ -83,6 +83,7 @@ class SQSListener:
         config['job_queue_name'] = queue_name
         config['response_queue_name'] = response_queue_name
         config['polling_interval'] = polling_interval
+        config['s3_logs_bucket'] = s3_logs_bucket
 
         ### Load SQSListener Configuration ###
         listener_config_yaml = self.load_sqs_listener_config(listener_config_path)
@@ -92,9 +93,12 @@ class SQSListener:
         ### Setup Logging
         self.logger = self.setup_logging(config.get('logging_config_path'))
         self.logger.info("Starting up SQS Listener...")
+        self.s3_logs_bucket = config['s3_logs_bucket']
 
         ### Connect to AWS ###
-        self.conn = self.connect_to_sqs(config.get('aws_region'))
+        self.aws_region = config.get('aws_region')
+        self.s3_logs_bucket = config.get('s3_logs_bucket')
+        self.conn = self.connect_to_sqs(self.aws_region)
         self.logger.info("Connecting to request queue: %s" % config.get('job_queue_name'))
         self.queue = self.conn.get_queue(config.get('job_queue_name'))
         self.logger.info("Connecting to response queue: %s" % config.get('response_queue_name'))
@@ -172,38 +176,20 @@ class SQSListener:
         polling_response = self.queue.get_messages()
 
         for message in polling_response:
-            self.process_message(message)
             self.logger.info("Deleting received message from queue.")
             self.queue.delete_message(message)
+            self.process_message(message)
+
 
     def process_message(self, message):
         """Process_message takes a boto library Message object, processes it appropriately based on the job definitions
         and then returns an appropriate message based on success or failure.
         :param message: The boto Message to process.
         """
+        request_message = None
+
         try:
             request_message = RequestMessage(message)
-            self.logger.info("Processing message %s for job %s" % (request_message.request_id,
-                                                                   request_message.job_name))
-
-            job = self.job_set.generate_job(request_message.job_name, request_message.job_parameters)
-
-            started_response_message = ResponseMessage(job_name=request_message.job_name,
-                                                       request_id=request_message.request_id,
-                                                       job_state="started",
-                                                       additional_message="Request has been received and the job is in progress.")
-
-            started_response_message_body = started_response_message.dump_yaml()
-            self.post_response(started_response_message_body)
-
-            completed_message_body = start_job_process(self.pool,
-                                                       job,
-                                                       request_message.request_id,
-                                                       self.response_queue,
-                                                       request_message)
-            request_id = request_message.request_id
-            self.logger.info("Sending message to response queue: %s" % request_id)
-            self.post_response(completed_message_body)
         except RequestMessageException, e:
             self.logger.exception(e)
             job_missing_response_message = ResponseMessage(job_name="unknown",
@@ -212,6 +198,39 @@ class SQSListener:
                                                            additional_message="Invalid Message: %s" % str(e))
             response_body = job_missing_response_message.dump_yaml()
             self.post_response(response_body)
+
+        try:
+            self.logger.info("Processing message %s for job %s" % (request_message.request_id,
+                                                                   request_message.job_name))
+
+            job = self.job_set.generate_job(request_message.job_name, request_message.job_parameters)
+
+            if self.s3_logs_bucket:
+                s3logger = s3logging.S3Logger(job.name, request_message.request_id, self.s3_logs_bucket)
+                logger_name = s3logger.logger_name
+            else:
+                logger_name = None
+
+            started_response_message = ResponseMessage(job_name=request_message.job_name,
+                                                       request_id=request_message.request_id,
+                                                       job_state="started",
+                                                       additional_message="Request has been received and the job "
+                                                                          "is in progress.")
+
+            started_response_message_body = started_response_message.dump_yaml()
+            self.post_response(started_response_message_body)
+
+            completed_message_body = start_job_process(self.pool,
+                                                       job,
+                                                       request_message.request_id,
+                                                       self.response_queue,
+                                                       request_message,
+                                                       logger_name)
+            request_id = request_message.request_id
+            self.logger.info("Sending message to response queue: %s" % request_id)
+            self.post_response(completed_message_body)
+            # s3logger.handler.flush()  # TODO: Not sure if this is needed.
+
         except SQSJobError, e:
             self.logger.error("An error occurred with the job: %s", str(e))
             job_missing_response_message = ResponseMessage(job_name=request_message.job_name,
@@ -231,7 +250,8 @@ class SQSListener:
             job_missing_response_message = ResponseMessage(job_name='unknown',
                                                            request_id='unknown',
                                                            job_state=response_states.failure,
-                                                           additional_message="There was a problem with your request Message, %s:\n%s"% (str(e), msg))
+                                                           additional_message=("There was a problem with your request "
+                                                                               "Message, %s:\n%s"% (str(e), msg)))
             response_body = job_missing_response_message.dump_yaml()
             self.post_response(response_body)
 

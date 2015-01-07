@@ -235,7 +235,8 @@ class Stack(object):
                   playbook_callbacks_class=None,
                   playbook_runner_callbacks_class=None,
                   sqs_response_queue=None,
-                  request_message=None):
+                  request_message=None,
+                  request_logger_name=None):
         """
         Executes the ansible playbooks that configure the servers in the stack.
 
@@ -291,19 +292,21 @@ class Stack(object):
                         verbose=ansible_verbosity
                         )
             else:
-                runner_cb = playbook_runner_callbacks_class(stats,
-                                                            ansible_verbosity,
-                                                            sqs_response_queue,
-                                                            request_message)
+                runner_cb = playbook_runner_callbacks_class(stats=stats,
+                                                            sqs_response_queue=sqs_response_queue,
+                                                            request_message=request_message,
+                                                            request_logger_name=request_logger_name,
+                                                            verbose=ansible_verbosity)
 
             if playbook_callbacks_class is None:
                 playbook_cb = callbacks.PlaybookCallbacks(
                         verbose=ansible_verbosity
                         )
             else:
-                playbook_cb = playbook_callbacks_class(ansible_verbosity,
-                                                       sqs_response_queue,
-                                                       request_message)
+                playbook_cb = playbook_callbacks_class(sqs_response_queue=sqs_response_queue,
+                                                       request_message=request_message,
+                                                       request_logger_name=request_logger_name,
+                                                       verbose=ansible_verbosity)
 
             extra_kwargs = {
                     'playbook': playbook_path,

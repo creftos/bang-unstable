@@ -34,7 +34,7 @@ class MissingJobNameRequestMessageException(RequestMessageException):
     pass
 
 
-class RequestMessage:
+class RequestMessage(object):
     def __init__(self, message):
         yaml_message_body = message.get_body()
         self.job_name = None

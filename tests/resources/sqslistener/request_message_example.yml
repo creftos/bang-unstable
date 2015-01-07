@@ -1,6 +1,6 @@
 ---
 # Example
-test_job_1:
+test_job_2:
   request_id: 12
   parameters:
   - param1

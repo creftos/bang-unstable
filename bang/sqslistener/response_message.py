@@ -37,7 +37,7 @@ def response_message_presenter(dumper, data):
 yaml.add_representer(OrderedDict, response_message_presenter)
 
 
-class ResponseMessage:
+class ResponseMessage(object):
     def __init__(self,
                  job_name,
                  request_id,
